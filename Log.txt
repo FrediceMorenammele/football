@@ -1,0 +1,313 @@
+18:03 9/25/2024: Tested Trained model (yolo_inference.py)
+9:08 9/25/2024: tracker.py class Tracker method get_object_tracks line 32 on vid : line 38 on project
+13:36 10/08/2024 main.py main function line 13 on vid : line 12 on project 1:23:18
+22:37 10/08/2024 main.py main function line 17 on vid : line 16 on project 1:36:54
+22.01 10/09/2024 team_assigner.py class TeamAssigner method line 9 on vid: line 7 on project 2:12:10
+22:57 10/10/2024 main.py function line 18 on vid : line 17 on project 2:38:50
+16:36 10/17/2024 team_assigner.py class TeamAssigner method get_player_team() line 68 on project 3:07:55
+11:07 9/29/2025 camera_movement_estimator.py class cameramovementEstimator method get_camera_movement() line 36 on duration 3:19:40
+
+
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, Scrollbar, Canvas
+import cv2
+import threading
+import time
+import firebase_admin
+from firebase_admin import credentials, firestore
+from PIL import Image, ImageTk
+import os
+
+# ---------------- FIREBASE INITIALIZATION ----------------
+try:
+    cred = credentials.Certificate("footballanalysisapp-f71c3-firebase-adminsdk-fbsvc-9dadc9be59.json")
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("✅ Firebase connection established")
+except Exception as e:
+    print("⚠ Firebase connection failed:", e)
+    db = None
+
+# ---------------- MODERN STYLING ----------------
+class ModernStyle:
+    PRIMARY = "#2E86AB"      # Fresh blue
+    SECONDARY = "#A23B72"    # Vibrant purple
+    SUCCESS = "#28A745"      # Green
+    WARNING = "#FFC107"      # Amber
+    INFO = "#17A2B8"         # Teal
+    LIGHT = "#F8F9FA"        # Light gray
+    WHITE = "#FFFFFF"        # Pure white
+    TEXT = "#2D3748"         # Dark gray for text
+    BORDER = "#E2E8F0"       # Light border
+
+# ---------------- MAIN APPLICATION CLASS ----------------
+class FootballAnalysisApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("⚽ Football Analysis Pro")
+        self.root.geometry("1300x800")
+        self.root.config(bg=ModernStyle.LIGHT)
+        self.center_window()
+
+        self.video_path = None
+        self.output_dir = os.getcwd()
+        self.analysis_running = False
+
+        self.setup_styles()
+        self.create_header()
+        self.create_main_layout()
+        self.create_footer()
+
+    def center_window(self):
+        self.root.update_idletasks()
+        width = 1300
+        height = 800
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f'{width}x{height}+{x}+{y}')
+
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('Primary.TButton', 
+                       background=ModernStyle.PRIMARY,
+                       foreground=ModernStyle.WHITE,
+                       font=('Segoe UI', 11, 'bold'),
+                       padding=(20, 10))
+        
+        style.configure('Success.TButton',
+                       background=ModernStyle.SUCCESS,
+                       foreground=ModernStyle.WHITE,
+                       font=('Segoe UI', 11, 'bold'),
+                       padding=(20, 10))
+        
+        style.configure('Custom.TFrame', background=ModernStyle.LIGHT)
+        style.configure('Card.TFrame', background=ModernStyle.WHITE, relief='raised', borderwidth=1)
+
+    def create_header(self):
+        header = tk.Frame(self.root, bg=ModernStyle.PRIMARY, height=100)
+        header.pack(fill=tk.X, side=tk.TOP, padx=0, pady=0)
+
+        title_frame = tk.Frame(header, bg=ModernStyle.PRIMARY)
+        title_frame.pack(side=tk.LEFT, padx=30, pady=20)
+
+        tk.Label(title_frame, text="⚽ Football Analysis Pro",
+                 font=("Segoe UI", 24, "bold"), fg=ModernStyle.WHITE, bg=ModernStyle.PRIMARY).pack(anchor='w')
+        tk.Label(title_frame, text="Professional Match Analysis Dashboard",
+                 font=("Segoe UI", 12), fg=ModernStyle.LIGHT, bg=ModernStyle.PRIMARY).pack(anchor='w')
+
+        control_frame = tk.Frame(header, bg=ModernStyle.PRIMARY)
+        control_frame.pack(side=tk.RIGHT, padx=30, pady=20)
+
+        ttk.Button(control_frame, text="📁 Select Video", 
+                  command=self.select_video, style='Primary.TButton').pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="🚀 Start Analysis", 
+                  command=self.start_analysis, style='Success.TButton').pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="📂 Output Folder", 
+                  command=self.choose_output, style='Primary.TButton').pack(side=tk.RIGHT, padx=5)
+
+    def create_main_layout(self):
+        main_container = tk.Frame(self.root, bg=ModernStyle.LIGHT)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Left column - scrollable output display
+        left_column = tk.Frame(main_container, bg=ModernStyle.LIGHT)
+        left_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scroll_canvas = Canvas(left_column, bg=ModernStyle.LIGHT, width=650, height=400)
+        scrollbar = Scrollbar(left_column, orient="vertical", command=scroll_canvas.yview)
+        self.scrollable_frame = tk.Frame(scroll_canvas, bg=ModernStyle.LIGHT)
+
+        self.scrollable_frame.bind("<Configure>",
+                                   lambda e: scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all")))
+
+        scroll_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        scroll_canvas.configure(yscrollcommand=scrollbar.set)
+
+        scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Buttons to show output video and heatmap
+        btn_frame = tk.Frame(self.scrollable_frame, bg=ModernStyle.LIGHT)
+        btn_frame.pack(pady=10)
+
+        ttk.Button(btn_frame, text="▶ Show Output Video", command=self.show_output_video,
+                   style='Primary.TButton').pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="🗺 Show Heatmap", command=self.show_heatmap,
+                   style='Primary.TButton').pack(side=tk.LEFT, padx=5)
+
+        # Display area
+        self.output_display = tk.Label(self.scrollable_frame, bg="#000000")
+        self.output_display.pack(pady=15)
+
+        # Right column - stats panels
+        right_column = tk.Frame(main_container, bg=ModernStyle.LIGHT, width=400)
+        right_column.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(15, 0))
+
+        self.stats_card = tk.Frame(right_column, bg=ModernStyle.WHITE, relief='raised', bd=1)
+        self.stats_card.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        self.create_stats_panel()
+
+        self.firebase_card = tk.Frame(right_column, bg=ModernStyle.WHITE, relief='raised', bd=1)
+        self.firebase_card.pack(fill=tk.BOTH, expand=True, pady=5)
+        self.create_firebase_panel()
+
+    def create_stats_panel(self):
+        header_frame = tk.Frame(self.stats_card, bg=ModernStyle.WHITE)
+        header_frame.pack(fill=tk.X, padx=20, pady=15)
+        tk.Label(header_frame, text="🏆 Live Analysis Stats", font=("Segoe UI", 16, "bold"),
+                 fg=ModernStyle.TEXT, bg=ModernStyle.WHITE).pack(side=tk.LEFT)
+
+        stats_content = tk.Frame(self.stats_card, bg=ModernStyle.WHITE)
+        stats_content.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        tk.Label(stats_content, text="Possession", font=("Segoe UI", 12, "bold"),
+                 fg=ModernStyle.TEXT, bg=ModernStyle.WHITE).pack(anchor='w')
+        possession_frame = tk.Frame(stats_content, bg=ModernStyle.WHITE)
+        possession_frame.pack(fill=tk.X, pady=5)
+        self.possession_bar = ttk.Progressbar(possession_frame, orient="horizontal", length=200, mode="determinate")
+        self.possession_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.possession_label = tk.Label(possession_frame, text="50%", font=("Segoe UI", 10, "bold"),
+                                        fg=ModernStyle.PRIMARY, bg=ModernStyle.WHITE, width=5)
+        self.possession_label.pack(side=tk.RIGHT, padx=(10, 0))
+
+        tk.Label(stats_content, text="⚡ Average Speed", font=("Segoe UI", 12, "bold"),
+                 fg=ModernStyle.TEXT, bg=ModernStyle.WHITE).pack(anchor='w', pady=(10,0))
+        self.speed_value = tk.Label(stats_content, text="0 km/h", font=("Segoe UI", 18, "bold"),
+                                   fg=ModernStyle.SECONDARY, bg=ModernStyle.WHITE)
+        self.speed_value.pack(anchor='w', pady=(5, 0))
+
+        tk.Label(stats_content, text="📏 Total Distance", font=("Segoe UI", 12, "bold"),
+                 fg=ModernStyle.TEXT, bg=ModernStyle.WHITE).pack(anchor='w', pady=(10,0))
+        self.distance_value = tk.Label(stats_content, text="0 m", font=("Segoe UI", 18, "bold"),
+                                      fg=ModernStyle.SUCCESS, bg=ModernStyle.WHITE)
+        self.distance_value.pack(anchor='w', pady=(5, 0))
+
+    def create_firebase_panel(self):
+        header_frame = tk.Frame(self.firebase_card, bg=ModernStyle.WHITE)
+        header_frame.pack(fill=tk.X, padx=20, pady=15)
+        tk.Label(header_frame, text="🔥 Match Database", font=("Segoe UI", 16, "bold"),
+                 fg=ModernStyle.TEXT, bg=ModernStyle.WHITE).pack(side=tk.LEFT)
+        ttk.Button(header_frame, text="🔄 Refresh", command=self.fetch_firebase_data,
+                   style='Primary.TButton').pack(side=tk.RIGHT)
+
+        comparison_frame = tk.Frame(self.firebase_card, bg=ModernStyle.WHITE)
+        comparison_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        team1_frame = tk.Frame(comparison_frame, bg=ModernStyle.WHITE)
+        team1_frame.pack(fill=tk.X, pady=5)
+        tk.Label(team1_frame, text="🔵 Team 1", font=("Segoe UI", 14, "bold"),
+                 fg=ModernStyle.PRIMARY, bg=ModernStyle.WHITE).pack(anchor='w')
+        self.fb_team1_possession = self.create_stat_row(team1_frame, "Possession:", "--%")
+        self.fb_team1_speed = self.create_stat_row(team1_frame, "Avg Speed:", "-- km/h")
+        self.fb_team1_distance = self.create_stat_row(team1_frame, "Total Distance:", "-- m")
+
+        ttk.Separator(comparison_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+
+        team2_frame = tk.Frame(comparison_frame, bg=ModernStyle.WHITE)
+        team2_frame.pack(fill=tk.X, pady=5)
+        tk.Label(team2_frame, text="🔴 Team 2", font=("Segoe UI", 14, "bold"),
+                 fg=ModernStyle.SECONDARY, bg=ModernStyle.WHITE).pack(anchor='w')
+        self.fb_team2_possession = self.create_stat_row(team2_frame, "Possession:", "--%")
+        self.fb_team2_speed = self.create_stat_row(team2_frame, "Avg Speed:", "-- km/h")
+        self.fb_team2_distance = self.create_stat_row(team2_frame, "Total Distance:", "-- m")
+
+    def create_stat_row(self, parent, label, default_value):
+        frame = tk.Frame(parent, bg=ModernStyle.WHITE)
+        frame.pack(fill=tk.X, pady=2)
+        tk.Label(frame, text=label, font=("Segoe UI", 10),
+                 fg=ModernStyle.TEXT, bg=ModernStyle.WHITE, width=15).pack(side=tk.LEFT)
+        value_label = tk.Label(frame, text=default_value, font=("Segoe UI", 10, "bold"),
+                              fg=ModernStyle.TEXT, bg=ModernStyle.WHITE)
+        value_label.pack(side=tk.RIGHT)
+        return value_label
+
+    def create_footer(self):
+        footer = tk.Frame(self.root, bg=ModernStyle.PRIMARY, height=40)
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Label(footer, text="© 2024 Football Analysis Pro | Professional Match Analytics",
+                 font=("Segoe UI", 9), fg=ModernStyle.WHITE, bg=ModernStyle.PRIMARY).pack(pady=10)
+
+    # ---------------- ACTIONS ----------------
+    def select_video(self):
+        self.video_path = filedialog.askopenfilename(
+            title="Select Match Video",
+            filetypes=[("Video Files", ".mp4 *.avi *.mov *.mkv"), ("All Files", ".*")]
+        )
+        if self.video_path:
+            messagebox.showinfo("Video Selected", f"✅ Selected: {os.path.basename(self.video_path)}")
+            self.progress_label.config(text=f"Ready: {os.path.basename(self.video_path)}")
+
+    def choose_output(self):
+        self.output_dir = filedialog.askdirectory(title="Choose Output Folder")
+        if self.output_dir:
+            messagebox.showinfo("Output Folder", f"📁 Output folder set to: {self.output_dir}")
+
+    def start_analysis(self):
+        messagebox.showinfo("Info", "⚠ This button should trigger your analysis script.")
+        # You can call your video processing code here, then the output will be in 'output_videos/'
+
+    def show_output_video(self):
+        video_path = os.path.join(self.output_dir, "output_video.avi")
+        if not os.path.exists(video_path):
+            messagebox.showerror("Error", "Output video not found!")
+            return
+        
+        def play_video():
+            cap = cv2.VideoCapture(video_path)
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame = cv2.resize(frame, (640, 360))
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = ImageTk.PhotoImage(Image.fromarray(rgb))
+                self.output_display.config(image=img)
+                self.output_display.image = img
+                self.output_display.update()
+                time.sleep(0.03)
+            cap.release()
+        
+        threading.Thread(target=play_video, daemon=True).start()
+
+    def show_heatmap(self):
+        heatmap_path = os.path.join(self.output_dir, "heatmap_overlay.jpg")
+        if not os.path.exists(heatmap_path):
+            messagebox.showerror("Error", "Heatmap not found!")
+            return
+        
+        img = cv2.imread(heatmap_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = ImageTk.PhotoImage(Image.fromarray(img))
+        self.output_display.config(image=img)
+        self.output_display.image = img
+
+    def fetch_firebase_data(self):
+        if not db:
+            messagebox.showerror("Firebase Error", "🔌 Not connected to Firebase.")
+            return
+        self.progress_label.config(text="📡 Fetching data from Firebase...")
+        try:
+            doc_ref = db.collection("Matchs").document("match1")
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                self.fb_team1_possession.config(text=f"{data.get('Team1Possession', '--')}%")
+                self.fb_team1_speed.config(text=f"{data.get('Team1_AvgSpeed', '--')} km/h")
+                self.fb_team1_distance.config(text=f"{data.get('Team1_TotalDistance', '--')} m")
+                self.fb_team2_possession.config(text=f"{data.get('Team2Possession', '--')}%")
+                self.fb_team2_speed.config(text=f"{data.get('Team2_AvgSpeed', '--')} km/h")
+                self.fb_team2_distance.config(text=f"{data.get('Team2_TotalDistance', '--')} m")
+                self.progress_label.config(text="✅ Firebase data updated successfully!")
+            else:
+                messagebox.showinfo("No Data", "📭 No Firebase document found for match1.")
+        except Exception as e:
+            messagebox.showerror("Firebase Error", str(e))
+
+# ---------------- RUN APP ----------------
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FootballAnalysisApp(root)
+    root.mainloop()
